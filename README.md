@@ -21,8 +21,7 @@ La carte affiche :
 - Projection de calcul : UTM zone 16 Nord (EPSG:32616), mètres.
 - Distance de chaque annonce à la côte (contour ADM0, frontières terrestres retirées).
 - Grille de 5 km : médiane des prix, nombre d'annonces et part de logements entiers par cellule.
-- Export web : couches reprojetées en WGS 84 (EPSG:4326) par qgis2web.
-- Détail de la méthode et commentaire : voir le document Word du rendu.
+
 
  Outils
 QGIS 3.34, extension qgis2web, Python (PyQGIS), OpenLayers.
