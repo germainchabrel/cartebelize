@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Airbnb au Belize</title>
+<meta name="description" content="Carte interactive : le prix et la nature des annonces Airbnb au Belize dépendent-ils de la distance à la côte ?">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+<style>
+  :root {
+    --encre: #1d1d1f;
+    --gris: #5c5c66;
+    --trait: #e3e1dc;
+    --fond-panneau: rgba(255, 255, 255, 0.96);
+    --accent: #800026;
+    --iso: #14288c;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #f2f0eb; }
+  body { font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--encre); }
+  #carte { position: absolute; inset: 0; background: #dfe6ea; }
+
+  /* Fond OSM un peu désaturé */
+  .tuiles-osm { filter: grayscale(0.55) contrast(0.95) brightness(1.04); }
+
+  /* ---------- Panneau ---------- */
+  #panneau {
+    position: absolute; z-index: 1000; top: 16px; left: 16px; bottom: 16px;
+    width: 360px; display: flex; flex-direction: column;
+    background: var(--fond-panneau); border-radius: 14px;
+    box-shadow: 0 6px 28px rgba(0, 0, 0, 0.18);
+    transition: transform 0.3s ease;
+  }
+  #panneau.replie { transform: translateX(calc(-100% - 16px)); }
+  #panneau.init { transition: none; }
+  #panneau .defile { overflow-y: auto; padding: 22px 22px 18px; }
+  #basculer {
+    position: absolute; top: 18px; right: -44px; width: 36px; height: 36px;
+    border: 0; border-radius: 10px; background: #fff; cursor: pointer;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2); font-size: 18px; color: var(--encre);
+  }
+  h1 { font-size: 21px; line-height: 1.25; margin: 0 0 8px; font-weight: 700; letter-spacing: -0.01em; }
+  .sous-titre { font-size: 14px; color: var(--gris); margin: 0 0 18px; line-height: 1.45; }
+
+  .chiffres { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 20px; }
+  .chiffre { background: #faf7f2; border: 1px solid var(--trait); border-radius: 10px; padding: 10px 8px; }
+  .chiffre b { display: block; font-size: 22px; color: var(--accent); font-weight: 700; line-height: 1.1; }
+  .chiffre span { display: block; font-size: 11.5px; color: var(--gris); line-height: 1.3; margin-top: 4px; }
+
+  .etiquette { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--gris); margin: 0 0 8px; }
+  .modes { display: flex; gap: 4px; background: #efece6; padding: 4px; border-radius: 10px; margin-bottom: 14px; }
+  .modes button {
+    flex: 1; border: 0; background: transparent; padding: 8px 4px; border-radius: 7px;
+    font: 500 12.5px "Inter", system-ui, sans-serif; color: var(--gris); cursor: pointer;
+  }
+  .modes button.actif { background: #fff; color: var(--encre); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12); }
+
+  #legende { margin-bottom: 18px; }
+  #legende .titre { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+  .classe { display: flex; align-items: center; gap: 10px; font-size: 13px; margin: 3px 0; font-variant-numeric: tabular-nums; }
+  .pastille { width: 26px; height: 15px; border-radius: 3px; border: 1px solid rgba(0, 0, 0, 0.12); flex: none; }
+  .ligne-leg { display: flex; align-items: center; gap: 10px; font-size: 13px; margin: 3px 0; }
+  .ligne-leg svg { flex: none; }
+  .note { font-size: 12px; color: var(--gris); margin-top: 6px; }
+
+  .lecture { font-size: 13.5px; line-height: 1.55; margin: 0 0 18px; }
+  .lecture p { margin: 0 0 8px; }
+  .sources { font-size: 11.5px; color: var(--gris); line-height: 1.5; border-top: 1px solid var(--trait); padding-top: 12px; }
+  .sources a { color: var(--gris); }
+
+  /* ---------- Carte ---------- */
+  .leaflet-popup-content-wrapper { border-radius: 10px; }
+  .leaflet-popup-content { margin: 12px 14px; font: 13px/1.5 "Inter", system-ui, sans-serif; }
+  .popup h3 { margin: 0 0 6px; font-size: 14px; }
+  .popup table { border-collapse: collapse; }
+  .popup td { padding: 1px 0; }
+  .popup td:last-child { text-align: right; font-weight: 600; padding-left: 14px; font-variant-numeric: tabular-nums; }
+  .popup .avert { margin-top: 6px; font-size: 12px; color: #9a4b00; }
+  .etiq-iso {
+    background: rgba(255, 255, 255, 0.9); border: 1px solid var(--iso); border-radius: 4px;
+    color: var(--iso); font: 600 11px "Inter", system-ui, sans-serif; padding: 1px 5px; white-space: nowrap;
+  }
+  #erreur {
+    display: none; position: absolute; z-index: 2000; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    max-width: 440px; background: #fff; border-left: 4px solid #b00020; border-radius: 8px;
+    padding: 16px 18px; box-shadow: 0 6px 28px rgba(0, 0, 0, 0.25); font-size: 14px; line-height: 1.5;
+  }
+  #erreur code { background: #f2f0eb; padding: 1px 5px; border-radius: 4px; }
+
+  /* ---------- Mobile ---------- */
+  @media (max-width: 700px) {
+    #panneau {
+      top: auto; left: 0; right: 0; bottom: 0; width: auto; max-height: 52vh;
+      border-radius: 14px 14px 0 0;
+    }
+    #panneau.replie { transform: translateY(calc(100% - 52px)); }
+    #panneau .defile { padding: 16px 16px 14px; }
+    #basculer { top: -46px; right: auto; left: 50%; transform: translateX(-50%); }
+    h1 { font-size: 18px; }
+    .leaflet-bottom.leaflet-left, .leaflet-bottom.leaflet-right { bottom: 52px; }
+  }
+</style>
+</head>
+<body>
+<div id="carte" role="region" aria-label="Carte des annonces Airbnb au Belize"></div>
+
+<aside id="panneau" class="init">
+  <button id="basculer" aria-label="Replier le panneau" title="Replier / déplier">‹</button>
+  <div class="defile">
+    <h1>Airbnb au Belize : une économie de la côte et des cayes ?</h1>
+    <p class="sous-titre">Le prix et la nature des annonces dépendent-ils de la distance à la côte&nbsp;? 2&nbsp;804 annonces regroupées sur une grille de 5&nbsp;km.</p>
+
+    <div class="chiffres">
+      <div class="chiffre"><b>80&nbsp;%</b><span>des annonces à moins de 5&nbsp;km de la côte</span></div>
+      <div class="chiffre"><b>×1,6</b><span>prix médian près de la côte (387&nbsp;€ contre 239&nbsp;€)</span></div>
+      <div class="chiffre"><b>74&nbsp;%</b><span>de logements entiers à moins de 1&nbsp;km</span></div>
+    </div>
+
+    <p class="etiquette">Colorer les cellules par</p>
+    <div class="modes" role="group" aria-label="Variable affichée">
+      <button data-mode="prix" class="actif">Prix médian</button>
+      <button data-mode="densite">Densité</button>
+      <button data-mode="entier">Logements entiers</button>
+    </div>
+
+    <div id="legende"></div>
+
+    <p class="etiquette">Lecture</p>
+    <div class="lecture">
+      <p>Les annonces se concentrent sur le littoral et les cayes (Ambergris Caye, Caye Caulker, Placencia). L'hypothèse est <b>confirmée pour la concentration</b>.</p>
+      <p>Pour le prix, elle est <b>nuancée</b> : la prime se joue dans le premier kilomètre (400&nbsp;€ médian), puis les prix retombent autour de 205 à 240&nbsp;€ sans gradient progressif. Sur une caye, toute annonce est à moins de 1&nbsp;km de la côte : la distance mesure surtout l'insularité.</p>
+    </div>
+
+    <div class="sources">
+      <b>Sources :</b> <a href="https://insideairbnb.com/" target="_blank" rel="noopener">Inside Airbnb</a> (relevé de septembre 2026) ;
+      contours <a href="https://www.geoboundaries.org/" target="_blank" rel="noopener">geoBoundaries</a> (ADM0) ;
+      fond © contributeurs OpenStreetMap / Esri.<br>
+      Traitements QGIS et PyQGIS (UTM 16N), classes en quantiles, cellules de moins de 3 annonces masquées.<br>
+      Germain Chabrel, M2 Visualisation, 2026. <a href="qgis2web/">Version qgis2web</a>.
+    </div>
+  </div>
+</aside>
+
+<div id="erreur" role="alert"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  var COULEURS = ["#ffeda0", "#dfb282", "#bf7763", "#a03b45", "#800026"];
+  var ISO = "#14288c";
+
+  var MODES = {
+    prix:    { champ: "prix_med", bornes: [181, 234, 321, 610], titre: "Prix médian (€ / nuit)", unite: " €" },
+    densite: { champ: "n",        bornes: [5, 10, 25, 100],     titre: "Nombre d'annonces par cellule", unite: "" },
+    entier:  { champ: "entier",   bornes: [50, 60, 70, 85],     titre: "Logements entiers (%)", unite: " %" }
+  };
+  var mode = "prix";
+
+  var fmt = new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 0 });
+
+  // ---------- Carte et fonds ----------
+  var carte = L.map("carte", { zoomControl: false, minZoom: 6, maxZoom: 16 }).setView([17.2, -88.5], 8);
+  L.control.zoom({ position: "bottomright" }).addTo(carte);
+  L.control.scale({ position: "bottomleft", imperial: false, maxWidth: 140 }).addTo(carte);
+
+  var osm = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19, className: "tuiles-osm",
+    attribution: '© <a href="https://www.openstreetmap.org/copyright">contributeurs OpenStreetMap</a>'
+  }).addTo(carte);
+  var esri = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
+    maxZoom: 18, attribution: "Imagerie © Esri, Maxar, Earthstar Geographics"
+  });
+  L.control.layers({ "Plan (OpenStreetMap)": osm, "Satellite (Esri)": esri }, null, { position: "topright" }).addTo(carte);
+
+  carte.createPane("panneauIso");    carte.getPane("panneauIso").style.zIndex = 420;
+  carte.createPane("panneauLimite"); carte.getPane("panneauLimite").style.zIndex = 430;
+  carte.getPane("panneauLimite").style.pointerEvents = "none";
+
+  // ---------- Couleurs ----------
+  function classe(v, bornes) {
+    for (var i = 0; i < bornes.length; i++) if (v < bornes[i]) return i;
+    return bornes.length;
+  }
+  function couleur(p) {
+    var m = MODES[mode];
+    return COULEURS[classe(p[m.champ], m.bornes)];
+  }
+  function style(f) {
+    return { fillColor: couleur(f.properties), fillOpacity: 0.82, color: "#fff", weight: 0.8, opacity: 0.9 };
+  }
+
+  // ---------- Légende ----------
+  var etendue = {};
+  function legende() {
+    var m = MODES[mode], b = m.bornes, e = etendue[mode];
+    var bornes = [e ? e[0] : null].concat(b, [e ? e[1] : null]);
+    var html = '<div class="titre">' + m.titre + "</div>";
+    for (var i = 0; i < COULEURS.length; i++) {
+      var de = bornes[i], a = bornes[i + 1], txt;
+      if (de === null) txt = "moins de " + fmt.format(a) + m.unite;
+      else if (a === null) txt = fmt.format(de) + m.unite + " et plus";
+      else txt = fmt.format(de) + " – " + fmt.format(a) + m.unite;
+      html += '<div class="classe"><span class="pastille" style="background:' + COULEURS[i] + '"></span>' + txt + "</div>";
+    }
+    html += '<div class="ligne-leg" style="margin-top:10px"><svg width="26" height="10"><line x1="0" y1="5" x2="26" y2="5" stroke="' + ISO + '" stroke-width="2" stroke-dasharray="5 4"/></svg>Distance à la côte (1, 5 et 20 km)</div>';
+    html += '<div class="ligne-leg"><svg width="26" height="10"><line x1="0" y1="5" x2="26" y2="5" stroke="#222" stroke-width="3"/></svg>Limites du Belize</div>';
+    html += '<div class="note">Cellules de 5 km. Moins de 3 annonces : non affichées.</div>';
+    document.getElementById("legende").innerHTML = html;
+  }
+
+  // ---------- Popups ----------
+  function popup(p) {
+    var h = '<div class="popup"><h3>Cellule de 5 × 5 km</h3><table>' +
+      "<tr><td>Annonces</td><td>" + fmt.format(p.n) + "</td></tr>" +
+      "<tr><td>Prix médian</td><td>" + fmt.format(p.prix_med) + " € / nuit</td></tr>" +
+      "<tr><td>Logements entiers</td><td>" + fmt.format(p.entier) + " %</td></tr></table>";
+    if (p.n < 5) h += '<div class="avert">Moins de 5 annonces : valeurs à lire avec prudence.</div>';
+    return h + "</div>";
+  }
+
+  // ---------- Étiquettes des isolignes ----------
+  // Chaque étiquette est posée sur le sommet le plus à l'ouest (côté terre)
+  // dans une bande de latitude, décalée d'une isoligne à l'autre pour éviter les chevauchements.
+  var CIBLES = { 1: 16.60, 5: 16.85, 20: 17.10 };
+  function sommetOuest(geom, lat) {
+    var lignes = geom.type === "LineString" ? [geom.coordinates] : geom.coordinates;
+    var mieux = null;
+    lignes.forEach(function (l) {
+      l.forEach(function (c) {
+        if (Math.abs(c[1] - lat) < 0.03 && (!mieux || c[0] < mieux[1])) mieux = [c[1], c[0]];
+      });
+    });
+    return mieux;
+  }
+
+  // ---------- Chargement ----------
+  function charger(url) {
+    return fetch(url).then(function (r) {
+      if (!r.ok) throw new Error(url + " : HTTP " + r.status);
+      return r.json();
+    });
+  }
+
+  var couche;
+  Promise.all([
+    charger("data/cellules.geojson"),
+    charger("data/isolignes.geojson"),
+    charger("data/belize.geojson")
+  ]).then(function (d) {
+    var cellules = d[0], isolignes = d[1], belize = d[2];
+
+    Object.keys(MODES).forEach(function (k) {
+      var vals = cellules.features.map(function (f) { return f.properties[MODES[k].champ]; });
+      etendue[k] = [Math.min.apply(null, vals), Math.max.apply(null, vals)];
+    });
+
+    couche = L.geoJSON(cellules, {
+      style: style,
+      onEachFeature: function (f, l) {
+        l.bindPopup(popup(f.properties));
+        l.on({
+          mouseover: function () { l.setStyle({ weight: 2.5, color: "#1d1d1f" }); l.bringToFront(); },
+          mouseout:  function () { couche.resetStyle(l); }
+        });
+      }
+    }).addTo(carte);
+
+    L.geoJSON(isolignes, {
+      pane: "panneauIso", interactive: false,
+      style: { color: ISO, weight: 1.6, dashArray: "6 5", opacity: 0.9 },
+      onEachFeature: function (f) {
+        var km = f.properties.km, pos = CIBLES[km] && sommetOuest(f.geometry, CIBLES[km]);
+        if (pos) L.marker(pos, {
+          pane: "panneauIso", interactive: false,
+          icon: L.divIcon({ className: "", html: '<span class="etiq-iso">' + km + " km</span>", iconSize: null, iconAnchor: [18, 9] })
+        }).addTo(carte);
+      }
+    }).addTo(carte);
+
+    var limite = L.geoJSON(belize, {
+      pane: "panneauLimite", interactive: false,
+      style: { color: "#222", weight: 2.6, fill: false, opacity: 0.9 }
+    }).addTo(carte);
+
+    // Cadrage sur le Belize (différé si la carte n'a pas encore de taille, onglet masqué par ex.)
+    function cadrer() {
+      carte.invalidateSize();
+      if (carte.getSize().x < 100) return false;
+      var large = window.innerWidth > 700;
+      carte.fitBounds(limite.getBounds(), {
+        paddingTopLeft: large ? [380, 20] : [10, 10],
+        paddingBottomRight: [20, large ? 20 : 70]
+      });
+      return true;
+    }
+    if (!cadrer()) carte.once("resize", cadrer);
+    legende();
+  }).catch(function (e) {
+    var div = document.getElementById("erreur");
+    div.style.display = "block";
+    div.innerHTML = location.protocol === "file:"
+      ? "<b>Les données ne peuvent pas être chargées en ouvrant le fichier directement.</b><br>" +
+        "Lancez un serveur local dans le dossier : <code>python -m http.server</code>, puis ouvrez <code>http://localhost:8000</code>."
+      : "<b>Erreur de chargement des données.</b><br>" + e.message;
+    console.error(e);
+  });
+
+  // ---------- Modes ----------
+  document.querySelectorAll(".modes button").forEach(function (b) {
+    b.addEventListener("click", function () {
+      mode = b.dataset.mode;
+      document.querySelectorAll(".modes button").forEach(function (x) { x.classList.toggle("actif", x === b); });
+      if (couche) couche.setStyle(style);
+      legende();
+    });
+  });
+
+  // ---------- Panneau repliable ----------
+  var panneau = document.getElementById("panneau"), btn = document.getElementById("basculer");
+  if (window.innerWidth <= 700) panneau.classList.add("replie"); // carte visible d'abord sur mobile
+  requestAnimationFrame(function () { requestAnimationFrame(function () { panneau.classList.remove("init"); }); });
+  function majBouton() {
+    var replie = panneau.classList.contains("replie"), mobile = window.innerWidth <= 700;
+    btn.textContent = mobile ? (replie ? "˄" : "˅") : (replie ? "›" : "‹");
+    btn.setAttribute("aria-label", replie ? "Déplier le panneau" : "Replier le panneau");
+  }
+  btn.addEventListener("click", function () { panneau.classList.toggle("replie"); majBouton(); });
+  window.addEventListener("resize", majBouton);
+  majBouton();
+  legende();
+})();
+</script>
+</body>
+</html>
